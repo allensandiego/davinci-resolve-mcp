@@ -524,10 +524,16 @@ local function log_bridge(level, msg)
     print(line)
     if io and io.flush then pcall(io.flush) end
 
-    -- Also append to persistent log for external troubleshooting
+    -- Safe file append (never reads or rewrites existing log to avoid quote runaway)
     local log_entry = (os and os.date and os.date("%Y-%m-%d ") or "") .. line .. "\n"
-    local prev = file_read("/tmp/davinci_bridge.log") or ""
-    file_write("/tmp/davinci_bridge.log", prev .. log_entry)
+    if io and io.open then
+        local f = io.open("/tmp/davinci_bridge.log", "a")
+        if f then f:write(log_entry) f:close() return end
+    end
+    if os and os.execute then
+        local esc = log_entry:gsub("'", "'\\''")
+        pcall(os.execute, string.format("printf '%%s' '%s' >> /tmp/davinci_bridge.log 2>/dev/null", esc))
+    end
 end
 
 -- ==============================================================================
@@ -1055,10 +1061,8 @@ local function run_bridge_listener()
         tostring(has_ffi), tostring(io ~= nil), tostring(bmd ~= nil), tostring(os ~= nil), tostring(r ~= nil)))
     if io and io.flush then pcall(io.flush) end
 
-    -- Also record startup in /tmp/davinci_bridge.log
-    local prev = file_read("/tmp/davinci_bridge.log") or ""
-    local startup_msg = (os and os.date and os.date("%Y-%m-%d %H:%M:%S") or "") .. " [STARTUP] Listener initialized successfully\n"
-    file_write("/tmp/davinci_bridge.log", prev .. startup_msg)
+    -- Record startup
+    log_bridge("STARTUP", "Listener initialized successfully")
 
     local running = true
     local poll_interval = 0.25 -- 250ms interval
