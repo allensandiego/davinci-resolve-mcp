@@ -72,10 +72,11 @@ def send_command(command, params=None, timeout=10.0, bridge_dir=None, poll=0.05)
                 )
             time.sleep(poll)
 
-        # Atomic write so the bridge never reads a partial file.
+        # Universal Lua chunk format: works in all Lua sandboxes without io or ffi
+        chunk_payload = f"return [=[{payload}]=]\n"
         tmp_path = cmd_path + ".client.tmp"
         with open(tmp_path, "w", encoding="utf-8") as f:
-            f.write(payload)
+            f.write(chunk_payload)
         os.replace(tmp_path, cmd_path)
 
         deadline = time.monotonic() + timeout
@@ -83,7 +84,13 @@ def send_command(command, params=None, timeout=10.0, bridge_dir=None, poll=0.05)
             if os.path.exists(resp_path):
                 try:
                     with open(resp_path, encoding="utf-8") as f:
-                        resp = json.load(f)
+                        raw = f.read().strip()
+                    if raw.startswith("return [=[") and raw.endswith("]=]"):
+                        raw = raw[10:-3].strip()
+                    try:
+                        resp = json.loads(raw)
+                    except json.JSONDecodeError:
+                        resp = None
                     if isinstance(resp, str):
                         try:
                             resp = json.loads(resp)

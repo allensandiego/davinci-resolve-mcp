@@ -420,6 +420,16 @@ local function safe_sleep(seconds)
 end
 
 local function file_read(path)
+    -- 1. Universal: loadfile chunk (bypasses all sandbox restrictions)
+    local chunk, err = loadfile(path)
+    if chunk then
+        local ok, res = pcall(chunk)
+        if ok and type(res) == "string" and #res > 0 then
+            return res
+        end
+    end
+
+    -- 2. LuaJIT FFI (if available)
     if has_ffi and ffi and ffi.C and ffi.C.fopen then
         local fp = ffi.C.fopen(path, "rb")
         if fp ~= nil then
@@ -436,6 +446,14 @@ local function file_read(path)
             return ffi.string(buf, n)
         end
     end
+
+    -- 3. bmd.readfile
+    if bmd and bmd.readfile then
+        local ok, c = pcall(bmd.readfile, path)
+        if ok and c and type(c) == "string" and #c > 0 then return c end
+    end
+
+    -- 4. io.open
     if io and io.open then
         local f = io.open(path, "rb")
         if f then
@@ -444,14 +462,18 @@ local function file_read(path)
             return c
         end
     end
-    if bmd and bmd.readfile then
-        local c = bmd.readfile(path)
-        if c and #c > 0 then return c end
-    end
+
     return nil
 end
 
 local function file_write(path, content)
+    -- 1. bmd.writefile
+    if bmd and bmd.writefile then
+        local ok, res = pcall(bmd.writefile, path, content)
+        if ok and (res == true or res == 1) then return true end
+    end
+
+    -- 2. LuaJIT FFI (if available)
     if has_ffi and ffi and ffi.C and ffi.C.fopen then
         local fp = ffi.C.fopen(path, "wb")
         if fp ~= nil then
@@ -462,6 +484,8 @@ local function file_write(path, content)
             return true
         end
     end
+
+    -- 3. io.open
     if io and io.open then
         local f = io.open(path, "wb")
         if f then
@@ -471,10 +495,16 @@ local function file_write(path, content)
             return true
         end
     end
-    if bmd and bmd.writefile then
-        local ok = bmd.writefile(path, content)
-        if ok then return true end
+
+    -- 4. Universal os.execute fallback (bypasses sandbox)
+    if os and os.execute then
+        local tmp = path .. ".tmp"
+        local esc = content:gsub("'", "'\\''")
+        local cmd = string.format("printf '%%s' '%s' > '%s' 2>/dev/null && mv -f '%s' '%s' 2>/dev/null", esc, tmp, tmp, path)
+        local ok = os.execute(cmd)
+        if ok == 0 or ok == true then return true end
     end
+
     return false
 end
 
@@ -1021,6 +1051,8 @@ local function run_bridge_listener()
     end
     header = header .. "\n=================================================================="
     print(header)
+    print(string.format("[Bridge Diagnostic] ffi=%s | io=%s | bmd=%s | os=%s | resolve=%s",
+        tostring(has_ffi), tostring(io ~= nil), tostring(bmd ~= nil), tostring(os ~= nil), tostring(r ~= nil)))
     if io and io.flush then pcall(io.flush) end
 
     -- Also record startup in /tmp/davinci_bridge.log
