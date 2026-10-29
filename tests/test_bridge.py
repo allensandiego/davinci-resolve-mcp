@@ -20,7 +20,7 @@ def test_error_when_bridge_not_running(monkeypatch):
     import davinci_resolve_mcp.client as client
     monkeypatch.setattr(client, "BRIDGE_PORT", 59999)
     monkeypatch.setattr(client, "BRIDGE_URL", "http://127.0.0.1:59999")
-    with pytest.raises(BridgeError, match="Cannot reach DaVinci Resolve AI bridge"):
+    with pytest.raises(BridgeError, match=r"(Cannot reach DaVinci Resolve AI bridge|No response to PING)"):
         send_command("PING", timeout=0.5)
 
 

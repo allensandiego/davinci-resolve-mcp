@@ -420,12 +420,14 @@ local function safe_sleep(seconds)
 end
 
 local function file_read(path)
-    -- 1. Universal: loadfile chunk (bypasses all sandbox restrictions)
-    local chunk, err = loadfile(path)
-    if chunk then
-        local ok, res = pcall(chunk)
-        if ok and type(res) == "string" and #res > 0 then
-            return res
+    -- 1. Universal: loadfile chunk (bypasses sandbox when available)
+    if loadfile then
+        local ok, chunk = pcall(loadfile, path)
+        if ok and chunk then
+            local ok_run, res = pcall(chunk)
+            if ok_run and type(res) == "string" and #res > 0 then
+                return res
+            end
         end
     end
 
@@ -1064,6 +1066,11 @@ local function run_bridge_listener()
     -- Record startup
     log_bridge("STARTUP", "Listener initialized successfully")
 
+    -- Show native desktop notification for instant visual confirmation
+    if not is_windows and os and os.execute then
+        pcall(os.execute, "osascript -e 'display notification \"Status: ACTIVE & LISTENING on /tmp/davinci_resolve_bridge\" with title \"DaVinci Resolve AI Bridge\"' 2>/dev/null &")
+    end
+
     local running = true
     local poll_interval = 0.25 -- 250ms interval
 
@@ -1090,6 +1097,9 @@ local function run_bridge_listener()
     end
 
     log_bridge("INFO", "AI Bridge listener exited.")
+    if not is_windows and os and os.execute then
+        pcall(os.execute, "osascript -e 'display notification \"Status: STOPPED\" with title \"DaVinci Resolve AI Bridge\"' 2>/dev/null &")
+    end
 end
 
 -- Start Listener
