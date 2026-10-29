@@ -84,9 +84,14 @@ def send_command(command, params=None, timeout=10.0, bridge_dir=None, poll=0.05)
                 try:
                     with open(resp_path, encoding="utf-8") as f:
                         resp = json.load(f)
+                    if isinstance(resp, str):
+                        try:
+                            resp = json.loads(resp)
+                        except Exception:
+                            pass
                 except (json.JSONDecodeError, OSError):
                     resp = None  # partially visible; retry
-                if resp and resp.get("id") == req_id:
+                if resp and isinstance(resp, dict) and resp.get("id") == req_id:
                     _remove(resp_path)
                     if resp.get("status") != "success":
                         raise BridgeError(resp.get("error") or "Unknown bridge error")

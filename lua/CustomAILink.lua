@@ -9,8 +9,8 @@
 ==============================================================================
 --]]
 
--- Enable unbuffered stdout for real-time console feedback
-if io.stdout and io.stdout.setvbuf then
+-- Enable unbuffered stdout for real-time console feedback (when available)
+if io and io.stdout and io.stdout.setvbuf then
     pcall(function() io.stdout:setvbuf("no") end)
 end
 
@@ -351,10 +351,66 @@ local function get_current_project()
     return proj, nil
 end
 
+-- ==============================================================================
+-- Sandboxed & Cross-Platform File Operations (Supports Resolve GUI & fuscript)
+-- ==============================================================================
+local function file_read(path)
+    if bmd and bmd.readfile then
+        local c = bmd.readfile(path)
+        if c and #c > 0 then return c end
+    end
+    if io and io.open then
+        local f = io.open(path, "r")
+        if f then
+            local c = f:read("*a")
+            f:close()
+            return c
+        end
+    end
+    return nil
+end
+
+local function file_write(path, content)
+    if bmd and bmd.writefile then
+        local ok = bmd.writefile(path, content)
+        if ok then return true end
+    end
+    if io and io.open then
+        local f = io.open(path, "w")
+        if f then
+            f:write(content)
+            f:flush()
+            f:close()
+            return true
+        end
+    end
+    return false
+end
+
+local function file_remove(path)
+    if os and os.remove then
+        pcall(function() os.remove(path) end)
+    end
+end
+
 local function log_bridge(level, msg)
-    local timestamp = os.date("%H:%M:%S")
-    print(string.format("[AI Bridge %s] [%s] %s", timestamp, level, msg))
-    if io.flush then pcall(io.flush) end
+    local timestamp = (os and os.date and os.date("%H:%M:%S")) or ""
+    local line = string.format("[AI Bridge %s] [%s] %s", timestamp, level, msg)
+    print(line)
+    if io and io.flush then pcall(io.flush) end
+
+    -- Also append to persistent log for external troubleshooting
+    local log_entry = (os and os.date and os.date("%Y-%m-%d ") or "") .. line .. "\n"
+    if bmd and bmd.readfile and bmd.writefile then
+        local prev = bmd.readfile("/tmp/davinci_bridge.log") or ""
+        bmd.writefile("/tmp/davinci_bridge.log", prev .. log_entry)
+    elseif io and io.open then
+        local f = io.open("/tmp/davinci_bridge.log", "a")
+        if f then
+            f:write(log_entry)
+            f:close()
+        end
+    end
 end
 
 -- ==============================================================================
@@ -362,33 +418,24 @@ end
 -- ==============================================================================
 local function write_atomic(dest_path, content)
     local tmp_path = dest_path .. ".tmp"
-    local f, err = io.open(tmp_path, "w")
-    if not f then
-        log_bridge("ERROR", "Failed to write temp file " .. tmp_path .. ": " .. tostring(err))
-        return false, err
+    local ok = file_write(tmp_path, content)
+    if not ok then
+        return file_write(dest_path, content)
     end
-    f:write(content)
-    f:flush()
-    f:close()
 
     -- On Windows, destination must be removed before rename
     if is_windows then
-        os.remove(dest_path)
+        file_remove(dest_path)
     end
 
-    local ok, ren_err = os.rename(tmp_path, dest_path)
-    if not ok then
-        -- Fallback: direct write
-        local df = io.open(dest_path, "w")
-        if df then
-            df:write(content)
-            df:flush()
-            df:close()
-            os.remove(tmp_path)
-            return true
-        end
-        return false, ren_err
+    if os and os.rename then
+        local ren_ok = os.rename(tmp_path, dest_path)
+        if ren_ok then return true end
     end
+
+    -- Fallback: direct write and remove tmp
+    file_write(dest_path, content)
+    file_remove(tmp_path)
     return true
 end
 
@@ -850,41 +897,44 @@ end
 -- Main Listener Loop
 -- ==============================================================================
 local function process_file(file_path, is_legacy)
-    local f = io.open(file_path, "r")
-    if not f then return nil end
-
-    local content = f:read("*a")
-    f:close()
-
+    local content = file_read(file_path)
     if not content or #content == 0 then
         return nil
     end
 
     -- Remove command file immediately to prevent reprocessing
-    os.remove(file_path)
+    file_remove(file_path)
 
     return parse_and_execute(content, is_legacy, file_path)
 end
 
 local function run_bridge_listener()
     local r = get_resolve()
-    print("==================================================================")
-    print(" DaVinci Resolve Free AI File-Polling Bridge (CustomAILink)")
-    print(" Status: ACTIVE & LISTENING")
-    print(" Bridge Directory: " .. PATHS.BRIDGE_DIR)
-    print(" Watching Files:")
-    print("   - JSON: " .. PATHS.CMD_JSON)
-    print("   - TXT:  " .. PATHS.CMD_TXT)
+    local header = [[
+==================================================================
+ DaVinci Resolve Free AI File-Polling Bridge (CustomAILink)
+ Status: ACTIVE & LISTENING
+ Bridge Directory: ]] .. PATHS.BRIDGE_DIR .. "\n" ..
+ [[ Watching Files:
+   - JSON: ]] .. PATHS.CMD_JSON .. "\n" ..
+ [[   - TXT:  ]] .. PATHS.CMD_TXT
     if PATHS.LEGACY_CMD_TXT ~= PATHS.CMD_TXT then
-        print("   - Fallback TXT:  " .. PATHS.LEGACY_CMD_TXT)
+        header = header .. "\n   - Fallback TXT:  " .. PATHS.LEGACY_CMD_TXT
     end
     if r then
-        print(" Connected To: " .. tostring(r:GetProductName()) .. " v" .. tostring(r:GetVersionString()))
+        header = header .. "\n Connected To: " .. tostring(r:GetProductName()) .. " v" .. tostring(r:GetVersionString())
     else
-        print(" Note: Running in standalone or unattached mode.")
+        header = header .. "\n Note: Running in standalone or unattached mode."
     end
-    print("==================================================================")
-    if io.flush then pcall(io.flush) end
+    header = header .. "\n=================================================================="
+    print(header)
+    if io and io.flush then pcall(io.flush) end
+
+    -- Also record startup in /tmp/davinci_bridge.log
+    if bmd and bmd.writefile then
+        local prev = bmd.readfile("/tmp/davinci_bridge.log") or ""
+        bmd.writefile("/tmp/davinci_bridge.log", prev .. os.date("%Y-%m-%d %H:%M:%S") .. " [STARTUP] Listener initialized successfully\n")
+    end
 
     local running = true
     local poll_interval = 0.25 -- 250ms interval
