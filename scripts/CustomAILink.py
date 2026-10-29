@@ -453,7 +453,11 @@ def run():
     try:
         server = HTTPServer((HOST, PORT), BridgeHTTPHandler)
         log_bridge("STARTUP", f"HTTP listener active on http://{HOST}:{PORT}")
-        server.serve_forever()
+        # Run in a background daemon thread so Resolve GUI and Console remain completely responsive
+        t = threading.Thread(target=server.serve_forever, daemon=True)
+        t.start()
+        print(f"\n[AI Bridge] ACTIVE & LISTENING on http://{HOST}:{PORT}", flush=True)
+        print("[AI Bridge] Running in background daemon thread. Resolve is fully responsive!\n", flush=True)
     except OSError as e:
         log_bridge("ERROR", f"Could not bind to port {PORT}: {e}")
     except KeyboardInterrupt:
