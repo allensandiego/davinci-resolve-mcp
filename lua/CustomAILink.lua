@@ -358,41 +358,88 @@ end
 
 -- ==============================================================================
 -- Sandboxed & Cross-Platform File Operations (Supports Resolve GUI & fuscript)
+-- Uses LuaJIT FFI with libc for direct raw byte I/O, bypassing sandbox limits
 -- ==============================================================================
+local has_ffi, ffi = pcall(require, "ffi")
+if has_ffi then
+    pcall(function()
+        ffi.cdef[[
+            void* fopen(const char* filename, const char* mode);
+            size_t fread(void* ptr, size_t size, size_t count, void* stream);
+            size_t fwrite(const void* ptr, size_t size, size_t count, void* stream);
+            int fclose(void* stream);
+            int fseek(void* stream, long int offset, int origin);
+            long int ftell(void* stream);
+            int remove(const char* filename);
+            int rename(const char* oldpath, const char* newpath);
+        ]]
+    end)
+end
+
 local function file_read(path)
-    if bmd and bmd.readfile then
-        local c = bmd.readfile(path)
-        if c and #c > 0 then return c end
+    if has_ffi and ffi and ffi.C and ffi.C.fopen then
+        local fp = ffi.C.fopen(path, "rb")
+        if fp ~= nil then
+            ffi.C.fseek(fp, 0, 2) -- SEEK_END
+            local sz = tonumber(ffi.C.ftell(fp))
+            ffi.C.fseek(fp, 0, 0) -- SEEK_SET
+            if sz <= 0 then
+                ffi.C.fclose(fp)
+                return ""
+            end
+            local buf = ffi.new("char[?]", sz)
+            local n = ffi.C.fread(buf, 1, sz, fp)
+            ffi.C.fclose(fp)
+            return ffi.string(buf, n)
+        end
     end
     if io and io.open then
-        local f = io.open(path, "r")
+        local f = io.open(path, "rb")
         if f then
             local c = f:read("*a")
             f:close()
             return c
         end
     end
+    if bmd and bmd.readfile then
+        local c = bmd.readfile(path)
+        if c and #c > 0 then return c end
+    end
     return nil
 end
 
 local function file_write(path, content)
-    if bmd and bmd.writefile then
-        local ok = bmd.writefile(path, content)
-        if ok then return true end
+    if has_ffi and ffi and ffi.C and ffi.C.fopen then
+        local fp = ffi.C.fopen(path, "wb")
+        if fp ~= nil then
+            if content and #content > 0 then
+                ffi.C.fwrite(content, 1, #content, fp)
+            end
+            ffi.C.fclose(fp)
+            return true
+        end
     end
     if io and io.open then
-        local f = io.open(path, "w")
+        local f = io.open(path, "wb")
         if f then
-            f:write(content)
+            if content and #content > 0 then f:write(content) end
             f:flush()
             f:close()
             return true
         end
     end
+    if bmd and bmd.writefile then
+        local ok = bmd.writefile(path, content)
+        if ok then return true end
+    end
     return false
 end
 
 local function file_remove(path)
+    if has_ffi and ffi and ffi.C and ffi.C.remove then
+        ffi.C.remove(path)
+        return
+    end
     if os and os.remove then
         pcall(function() os.remove(path) end)
     end
@@ -406,16 +453,8 @@ local function log_bridge(level, msg)
 
     -- Also append to persistent log for external troubleshooting
     local log_entry = (os and os.date and os.date("%Y-%m-%d ") or "") .. line .. "\n"
-    if bmd and bmd.readfile and bmd.writefile then
-        local prev = bmd.readfile("/tmp/davinci_bridge.log") or ""
-        bmd.writefile("/tmp/davinci_bridge.log", prev .. log_entry)
-    elseif io and io.open then
-        local f = io.open("/tmp/davinci_bridge.log", "a")
-        if f then
-            f:write(log_entry)
-            f:close()
-        end
-    end
+    local prev = file_read("/tmp/davinci_bridge.log") or ""
+    file_write("/tmp/davinci_bridge.log", prev .. log_entry)
 end
 
 -- ==============================================================================
@@ -431,6 +470,12 @@ local function write_atomic(dest_path, content)
     -- On Windows, destination must be removed before rename
     if is_windows then
         file_remove(dest_path)
+    end
+
+    if has_ffi and ffi and ffi.C and ffi.C.rename then
+        if ffi.C.rename(tmp_path, dest_path) == 0 then
+            return true
+        end
     end
 
     if os and os.rename then
@@ -936,10 +981,9 @@ local function run_bridge_listener()
     if io and io.flush then pcall(io.flush) end
 
     -- Also record startup in /tmp/davinci_bridge.log
-    if bmd and bmd.writefile then
-        local prev = bmd.readfile("/tmp/davinci_bridge.log") or ""
-        bmd.writefile("/tmp/davinci_bridge.log", prev .. os.date("%Y-%m-%d %H:%M:%S") .. " [STARTUP] Listener initialized successfully\n")
-    end
+    local prev = file_read("/tmp/davinci_bridge.log") or ""
+    local startup_msg = (os and os.date and os.date("%Y-%m-%d %H:%M:%S") or "") .. " [STARTUP] Listener initialized successfully\n"
+    file_write("/tmp/davinci_bridge.log", prev .. startup_msg)
 
     local running = true
     local poll_interval = 0.25 -- 250ms interval
