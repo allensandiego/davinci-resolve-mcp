@@ -339,10 +339,34 @@ end
 -- ==============================================================================
 -- DaVinci Resolve Connection & Helper Functions
 -- ==============================================================================
+local cached_resolve = nil
 local function get_resolve()
-    if resolve then return resolve end
-    if app and app.GetResolve then return app:GetResolve() end
-    if bmd and bmd.scriptapp then return bmd.scriptapp("Resolve") end
+    if cached_resolve then return cached_resolve end
+    if resolve then
+        cached_resolve = resolve
+        return resolve
+    end
+    if Resolve and type(Resolve) == "function" then
+        local ok, r = pcall(Resolve)
+        if ok and r then
+            cached_resolve = r
+            return r
+        end
+    end
+    if app and app.GetResolve then
+        local ok, r = pcall(function() return app:GetResolve() end)
+        if ok and r then
+            cached_resolve = r
+            return r
+        end
+    end
+    if bmd and bmd.scriptapp then
+        local ok, r = pcall(function() return bmd.scriptapp("Resolve") end)
+        if ok and r then
+            cached_resolve = r
+            return r
+        end
+    end
     return nil
 end
 
@@ -372,8 +396,27 @@ if has_ffi then
             long int ftell(void* stream);
             int remove(const char* filename);
             int rename(const char* oldpath, const char* newpath);
+            int usleep(unsigned int useconds);
         ]]
     end)
+end
+
+local function safe_sleep(seconds)
+    if bmd and bmd.wait then
+        local ok = pcall(bmd.wait, seconds)
+        if ok then return end
+    end
+    if has_ffi and ffi and ffi.C and ffi.C.usleep then
+        local ok = pcall(function() ffi.C.usleep(math.floor(seconds * 1000000)) end)
+        if ok then return end
+    end
+    if os and os.execute then
+        if is_windows then
+            pcall(os.execute, "timeout /t 1 /nobreak >nul 2>&1")
+        else
+            pcall(os.execute, "sleep " .. tostring(seconds) .. " 2>/dev/null || sleep 1")
+        end
+    end
 end
 
 local function file_read(path)
@@ -989,33 +1032,25 @@ local function run_bridge_listener()
     local poll_interval = 0.25 -- 250ms interval
 
     while running do
-        -- 1. Check Primary JSON
-        local res = process_file(PATHS.CMD_JSON, false)
-        if res == "EXIT" then break end
+        local ok, res = pcall(process_file, PATHS.CMD_JSON, false)
+        if ok and res == "EXIT" then break end
+        if not ok then log_bridge("ERROR", "Error in CMD_JSON: " .. tostring(res)) end
 
-        -- 2. Check Primary Plain Text
-        res = process_file(PATHS.CMD_TXT, false)
-        if res == "EXIT" then break end
+        ok, res = pcall(process_file, PATHS.CMD_TXT, false)
+        if ok and res == "EXIT" then break end
+        if not ok then log_bridge("ERROR", "Error in CMD_TXT: " .. tostring(res)) end
 
-        -- 3. Check Fallback / Legacy Paths (e.g. /tmp/resolve_cmd.txt)
         if PATHS.LEGACY_CMD_TXT ~= PATHS.CMD_TXT then
-            res = process_file(PATHS.LEGACY_CMD_TXT, true)
-            if res == "EXIT" then break end
+            ok, res = pcall(process_file, PATHS.LEGACY_CMD_TXT, true)
+            if ok and res == "EXIT" then break end
         end
 
         if PATHS.LEGACY_CMD_JSON ~= PATHS.CMD_JSON then
-            res = process_file(PATHS.LEGACY_CMD_JSON, true)
-            if res == "EXIT" then break end
+            ok, res = pcall(process_file, PATHS.LEGACY_CMD_JSON, true)
+            if ok and res == "EXIT" then break end
         end
 
-        -- Non-blocking sleep: bmd.wait() yields to Resolve's main loop!
-        if bmd and bmd.wait then
-            bmd.wait(poll_interval)
-        else
-            -- Fallback if run in standalone Lua without bmd
-            local start_time = os.time()
-            repeat until os.time() - start_time >= 1
-        end
+        safe_sleep(poll_interval)
     end
 
     log_bridge("INFO", "AI Bridge listener exited.")
