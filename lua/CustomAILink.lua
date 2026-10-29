@@ -14,8 +14,13 @@ if io and io.stdout and io.stdout.setvbuf then
     pcall(function() io.stdout:setvbuf("no") end)
 end
 
--- Detect Operating System & Directory Separator
-local is_windows = package.config:sub(1, 1) == "\\"
+-- Detect Operating System & Directory Separator safely (without assuming package table exists)
+local is_windows = false
+if package and package.config then
+    is_windows = (package.config:sub(1, 1) == "\\")
+elseif os and (os.getenv("WINDIR") or os.getenv("SystemRoot") or (os.getenv("OS") and tostring(os.getenv("OS")):match("Windows"))) then
+    is_windows = true
+end
 local sep = is_windows and "\\" or "/"
 
 -- Resolve Bridge Working Directory
