@@ -366,16 +366,82 @@ def process_file(file_path):
 
     return True
 
+# HTTP Server Implementation
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import urllib.request
+import urllib.error
+import threading
+
+HOST = "127.0.0.1"
+PORT = int(os.environ.get("DAVINCI_BRIDGE_PORT", "9876"))
+
+class BridgeHTTPHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        cmd = self.path.strip("/").split("/")[-1].upper()
+        if not cmd or cmd == "PING":
+            cmd = "PING"
+        handler = COMMANDS.get(cmd)
+        if handler:
+            try:
+                res = handler({})
+                self._send_json(200, {"status": "success", "data": res})
+            except Exception as e:
+                self._send_json(500, {"status": "error", "error": str(e)})
+        else:
+            self._send_json(404, {"status": "error", "error": f"Unknown command: {cmd}"})
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", 0))
+        raw = self.rfile.read(length) if length > 0 else b"{}"
+        try:
+            params = json.loads(raw.decode("utf-8")) if raw else {}
+        except Exception:
+            params = {}
+
+        cmd = self.path.strip("/").split("/")[-1].upper()
+        if cmd in ("SHUTDOWN", "EXIT", "QUIT"):
+            self._send_json(200, {"status": "success", "message": "Bridge shutting down"})
+            threading.Thread(target=self.server.shutdown).start()
+            return
+
+        handler = COMMANDS.get(cmd)
+        if not handler:
+            self._send_json(404, {"status": "error", "error": f"Unknown command: {cmd}"})
+            return
+
+        try:
+            res = handler(params)
+            self._send_json(200, {"status": "success", "data": res})
+        except Exception as e:
+            self._send_json(500, {"status": "error", "error": str(e)})
+
+    def _send_json(self, code, obj):
+        data = json.dumps(obj).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def log_message(self, format, *args):
+        pass
+
 def run():
+    # Gracefully notify any previous instance on the port to exit
+    try:
+        req = urllib.request.Request(f"http://{HOST}:{PORT}/SHUTDOWN", data=b"{}", method="POST")
+        urllib.request.urlopen(req, timeout=1.0)
+        time.sleep(0.5)
+    except Exception:
+        pass
+
     r = get_resolve()
     header = (
         "==================================================================\n"
-        " DaVinci Resolve Free AI File-Polling Bridge (Python)\n"
+        " DaVinci Resolve Free AI HTTP Bridge (CustomAILink)\n"
         " Status: ACTIVE & LISTENING\n"
-        f" Bridge Directory: {BRIDGE_DIR}\n"
-        f" Watching Files:\n"
-        f"   - JSON: {CMD_JSON}\n"
-        f"   - TXT:  {CMD_TXT}\n"
+        f" Listening on: http://{HOST}:{PORT}\n"
     )
     if r:
         header += f" Connected To: {r.GetProductName()} v{r.GetVersionString()}\n"
@@ -385,20 +451,13 @@ def run():
     print(header, flush=True)
 
     try:
-        with open(LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} [STARTUP] Python listener initialized\n")
-    except Exception:
-        pass
-
-    while True:
-        try:
-            if process_file(CMD_JSON) == "EXIT": break
-            if process_file(CMD_TXT) == "EXIT": break
-        except Exception as e:
-            log_bridge("ERROR", f"Loop exception: {e}")
-        time.sleep(0.25)
-
-    log_bridge("INFO", "Python Bridge listener exited.")
+        server = HTTPServer((HOST, PORT), BridgeHTTPHandler)
+        log_bridge("STARTUP", f"HTTP listener active on http://{HOST}:{PORT}")
+        server.serve_forever()
+    except OSError as e:
+        log_bridge("ERROR", f"Could not bind to port {PORT}: {e}")
+    except KeyboardInterrupt:
+        log_bridge("INFO", "Bridge listener stopped by user.")
 
 # Start Listener
 run()
