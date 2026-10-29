@@ -110,34 +110,64 @@ echo SAVE_PROJECT > %TEMP%\resolve_cmd.txt
 The Python package wraps the bridge and exposes every command as a typed MCP tool.
 It requires the Lua bridge to be running inside Resolve.
 
+### Option 1: Standalone Installation (Recommended for Daily Use)
+
+Install directly into your global tool environment with `uv`:
+
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -e .          # add '.[dev]' to run the tests
+uv tool install git+https://github.com/allensandiego/davinci-resolve-mcp
 ```
 
-Add to your MCP client config (e.g. Claude Desktop), using the absolute path:
+Add to your MCP client config (e.g. Claude Desktop, Antigravity, Cursor):
 
 ```json
 {
   "mcpServers": {
     "davinci-resolve": {
-      "command": "/path/to/davinci-resolve-mcp/.venv/bin/davinci-resolve-mcp"
+      "command": "davinci-resolve-mcp"
+    }
+  }
+}
+```
+*(Or specify the absolute binary path, e.g. `~/.local/bin/davinci-resolve-mcp`)*
+
+Alternatively, run on demand without prior installation using `uvx`:
+
+```json
+{
+  "mcpServers": {
+    "davinci-resolve": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/allensandiego/davinci-resolve-mcp.git", "davinci-resolve-mcp"]
     }
   }
 }
 ```
 
-Test the bridge by hand:
+### Option 2: Local Development
+
+If you are modifying or extending the bridge:
 
 ```bash
-.venv/bin/resolve-cli ping
-.venv/bin/resolve-cli create_timeline '{"name": "Rough Cut"}'
+git clone git@github.com:allensandiego/davinci-resolve-mcp.git
+cd davinci-resolve-mcp
+python3 -m venv .venv
+.venv/bin/pip install -e '.[dev]'
 ```
 
-Run the tests (they launch the Lua bridge under Resolve's `fuscript`; set `FUSCRIPT` if it is installed elsewhere):
+### Testing the Bridge
+
+Send commands manually via the CLI:
 
 ```bash
-.venv/bin/pytest
+resolve-cli ping
+resolve-cli create_timeline '{"name": "Rough Cut"}'
+```
+
+Run integration tests (these launch the Lua bridge under Resolve's `fuscript`; set `FUSCRIPT` if it is located elsewhere):
+
+```bash
+pytest
 ```
 
 Set `DAVINCI_BRIDGE_DIR` to override the bridge directory (must match on both sides).
