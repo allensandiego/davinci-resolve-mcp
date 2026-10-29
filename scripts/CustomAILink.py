@@ -70,6 +70,21 @@ def send_response(req_id, cmd_name, success, data=None, err_msg=None):
 def get_resolve():
     if "resolve" in globals() and globals()["resolve"] is not None:
         return globals()["resolve"]
+    if "bmd" in globals() and hasattr(globals()["bmd"], "scriptapp"):
+        try:
+            r = globals()["bmd"].scriptapp("Resolve")
+            if r: return r
+        except Exception:
+            pass
+    try:
+        import __main__
+        if hasattr(__main__, "resolve") and __main__.resolve:
+            return __main__.resolve
+        if hasattr(__main__, "bmd") and hasattr(__main__.bmd, "scriptapp"):
+            r = __main__.bmd.scriptapp("Resolve")
+            if r: return r
+    except Exception:
+        pass
     try:
         import DaVinciResolveScript as bmd
         return bmd.scriptapp("Resolve")
@@ -304,6 +319,12 @@ def process_file(file_path):
     if not raw:
         return None
 
+    raw = raw.strip()
+    if raw.startswith("return [=[") and "]=]" in raw:
+        start_idx = len("return [=[")
+        end_idx = raw.rfind("]=]")
+        raw = raw[start_idx:end_idx].strip()
+
     req_id = None
     cmd_name = None
     params = {}
@@ -379,5 +400,5 @@ def run():
 
     log_bridge("INFO", "Python Bridge listener exited.")
 
-if __name__ == "__main__":
-    run()
+# Start Listener
+run()
