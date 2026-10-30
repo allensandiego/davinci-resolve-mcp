@@ -15,6 +15,15 @@ import os
 import sys
 import time
 
+# Resolve's embedded Python runtime wraps sys.stdout in 'fu_stdout', which lacks .flush()
+try:
+    if hasattr(sys, "stdout") and not hasattr(sys.stdout, "flush"):
+        sys.stdout.flush = lambda: None
+    if hasattr(sys, "stderr") and not hasattr(sys.stderr, "flush"):
+        sys.stderr.flush = lambda: None
+except Exception:
+    pass
+
 def get_bridge_dir():
     custom = os.environ.get("DAVINCI_BRIDGE_DIR") or os.environ.get("RESOLVE_BRIDGE_DIR")
     if custom:
@@ -36,7 +45,10 @@ LOG_FILE = "/tmp/davinci_bridge.log"
 def log_bridge(level, msg):
     ts = time.strftime("%H:%M:%S")
     line = f"[AI Bridge {ts}] [{level}] {msg}"
-    print(line, flush=True)
+    try:
+        print(line)
+    except Exception:
+        pass
     try:
         with open(LOG_FILE, "a", encoding="utf-8") as f:
             f.write(f"{time.strftime('%Y-%m-%d ')}{line}\n")
@@ -448,7 +460,10 @@ def run():
     else:
         header += " Note: Running in standalone or unattached mode.\n"
     header += "=================================================================="
-    print(header, flush=True)
+    try:
+        print(header)
+    except Exception:
+        pass
 
     try:
         server = HTTPServer((HOST, PORT), BridgeHTTPHandler)
@@ -456,8 +471,11 @@ def run():
         # Run in a background daemon thread so Resolve GUI and Console remain completely responsive
         t = threading.Thread(target=server.serve_forever, daemon=True)
         t.start()
-        print(f"\n[AI Bridge] ACTIVE & LISTENING on http://{HOST}:{PORT}", flush=True)
-        print("[AI Bridge] Running in background daemon thread. Resolve is fully responsive!\n", flush=True)
+        try:
+            print(f"\n[AI Bridge] ACTIVE & LISTENING on http://{HOST}:{PORT}")
+            print("[AI Bridge] Running in background daemon thread. Resolve is fully responsive!\n")
+        except Exception:
+            pass
         if sys.platform == "darwin":
             os.system('osascript -e \'display notification "Status: ACTIVE & LISTENING on http://127.0.0.1:9876" with title "DaVinci Resolve AI Bridge"\' 2>/dev/null &')
     except OSError as e:
