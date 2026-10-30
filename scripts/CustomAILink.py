@@ -458,6 +458,8 @@ def run():
         t.start()
         print(f"\n[AI Bridge] ACTIVE & LISTENING on http://{HOST}:{PORT}", flush=True)
         print("[AI Bridge] Running in background daemon thread. Resolve is fully responsive!\n", flush=True)
+        if sys.platform == "darwin":
+            os.system('osascript -e \'display notification "Status: ACTIVE & LISTENING on http://127.0.0.1:9876" with title "DaVinci Resolve AI Bridge"\' 2>/dev/null &')
     except OSError as e:
         log_bridge("ERROR", f"Could not bind to port {PORT}: {e}")
     except KeyboardInterrupt:
